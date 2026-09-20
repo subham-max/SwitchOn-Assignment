@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError, getAsset, thumbnailUrl, updateAsset } from '@/api/client';
 import { formatBytes, formatDate, formatDuration, statusLabel } from '@/lib/format';
 import type { Asset, AssetStatus } from '@/lib/types';
@@ -20,6 +20,7 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setAsset(null);
@@ -29,6 +30,15 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
       .then(setAsset)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Load failed'));
   }, [id]);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   async function setStatus(status: AssetStatus) {
     if (!asset) return;
@@ -59,7 +69,7 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
     <aside className="panel">
       <div className="panel__head">
         <h2>Asset detail</h2>
-        <button onClick={onClose}>Close</button>
+        <button ref={closeButtonRef} onClick={onClose}>Close</button>
       </div>
 
       {error && <p className="error">{error}</p>}

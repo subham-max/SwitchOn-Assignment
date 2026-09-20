@@ -23,9 +23,16 @@ const GRID_PADDING = 16;
 
 export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpen, onReachEnd }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const [columns, setColumns] = useState(1);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [focusedId, setFocusedId] = useState(assets[0]?.id ?? null);
+
+  useEffect(() => {
+    if (focusedId && assets.some((asset) => asset.id === focusedId)) return;
+    setFocusedId(assets[0]?.id ?? null);
+  }, [assets, focusedId]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -61,6 +68,42 @@ export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpe
     }
   }
 
+  function moveFocus(index: number) {
+    const nextIndex = Math.max(0, Math.min(assets.length - 1, index));
+    const nextAsset = assets[nextIndex];
+    if (!nextAsset) return;
+    setFocusedId(nextAsset.id);
+    const row = Math.floor(nextIndex / columns);
+    const nextTop = row * rowStride;
+    const viewport = viewportRef.current;
+    if (viewport && (nextTop < viewport.scrollTop || nextTop + CARD_HEIGHT > viewport.scrollTop + viewport.clientHeight)) {
+      viewport.scrollTop = Math.max(0, nextTop - CARD_HEIGHT);
+    }
+    requestAnimationFrame(() => cardRefs.current.get(nextAsset.id)?.focus());
+  }
+
+  function handleCardKeyDown(event: React.KeyboardEvent<HTMLDivElement>, assetIndex: number, assetId: string) {
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      moveFocus(assetIndex + 1);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      moveFocus(assetIndex - 1);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveFocus(assetIndex + columns);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveFocus(assetIndex - columns);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      onOpen(assetId);
+    } else if (event.key === ' ') {
+      event.preventDefault();
+      onToggleSelect(assetId, event.shiftKey);
+    }
+  }
+
   if (assets.length === 0) {
     return (
       <div className="empty">
@@ -71,37 +114,55 @@ export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpe
   }
 
   return (
-    <div ref={viewportRef} className="grid" onScroll={handleScroll}>
+    <div ref={viewportRef} className="grid" role="grid" aria-label="Media assets" onScroll={handleScroll}>
       <div className="grid__spacer" style={{ height: Math.max(0, rowCount * rowStride - GRID_GAP + GRID_PADDING * 2) }}>
         <div className="grid__window" style={{ transform: `translateY(${firstRow * rowStride + GRID_PADDING}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
-      {visibleAssets.map((asset) => (
+      {visibleAssets.map((asset, visibleIndex) => {
+        const assetIndex = firstRow * columns + visibleIndex;
+        return (
         <AssetCard
           key={asset.id}
           asset={asset}
           selected={selectedIds.has(asset.id)}
           active={activeId === asset.id}
+          focused={focusedId === asset.id}
+          cardRef={(element) => {
+            if (element) cardRefs.current.set(asset.id, element);
+            else cardRefs.current.delete(asset.id);
+          }}
           onToggleSelect={onToggleSelect}
           onOpen={onOpen}
+          onKeyDown={(event) => handleCardKeyDown(event, assetIndex, asset.id)}
         />
-      ))}
+        );
+      })}
         </div>
       </div>
     </div>
   );
 }
 
-const AssetCard = memo(function AssetCard({ asset, selected, active, onToggleSelect, onOpen }: {
+const AssetCard = memo(function AssetCard({ asset, selected, active, focused, cardRef, onToggleSelect, onOpen, onKeyDown }: {
   asset: Asset;
   selected: boolean;
   active: boolean;
+  focused: boolean;
+  cardRef: (element: HTMLDivElement | null) => void;
   onToggleSelect: (id: string, extendRange: boolean) => void;
   onOpen: (id: string) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
 }) {
   const [thumbnailFailed, setThumbnailFailed] = useState(!asset.hasThumbnail);
 
   return (
     <div
+      ref={cardRef}
       className={'card' + (selected ? ' card--selected' : '') + (active ? ' card--active' : '')}
+      role="gridcell"
+      aria-selected={selected}
+      tabIndex={focused ? 0 : -1}
+      data-asset-id={asset.id}
+      onKeyDown={onKeyDown}
       onClick={() => onOpen(asset.id)}
     >
       {thumbnailFailed ? (

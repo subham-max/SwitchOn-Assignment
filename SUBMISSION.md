@@ -44,8 +44,8 @@ Roughly, and how you split it.
 | 16 | API errors are flattened into strings, so callers cannot distinguish retryable failures, validation failures, conflicts, stale cursors, rate limits, and missing thumbnails without parsing text. | `src/api/client.ts` | **Fixed**: `ApiError` preserves HTTP status, API code, retryability, and human-readable copy. |
 | 17 | There is no offline detection or recovery state. The app continues making requests while offline and gives no user-oriented explanation when the connection returns or fails. | `src/App.tsx`, `src/api/client.ts`, `src/features/assets/useAssets.ts` | **Fixed**: offline/online events drive a banner, new requests stop while offline, and the active query reloads after reconnection. Writes are not queued; the user is asked to reconnect and retry. |
 | 18 | There is no error boundary. A render-time component failure can blank the entire page with no recovery action. | `src/main.tsx` | **Fixed**: a component-level boundary reports the failure and offers an application reload action. |
-| 19 | The asset cards are clickable `div` elements without grid semantics, keyboard handlers, roving tabindex, arrow navigation, Enter, Space, or Shift-range selection. | `src/features/assets/AssetGrid.tsx` | Knowingly left for Task 5: pointer Shift-range selection is fixed in Task 3, but keyboard range selection remains. |
-| 20 | Selection state is not exposed through `aria-selected` or equivalent grid semantics. | `src/features/assets/AssetGrid.tsx` | Knowingly left for Task 5: checkboxes now have asset-specific accessible names, but grid selection semantics remain. |
+| 19 | The asset cards are clickable `div` elements without grid semantics, keyboard handlers, roving tabindex, arrow navigation, Enter, Space, or Shift-range selection. | `src/features/assets/AssetGrid.tsx` | **Fixed**: the grid has roving focus, arrow navigation, Enter, Space, and Shift-range selection. |
+| 20 | Selection state is not exposed through `aria-selected` or equivalent grid semantics. | `src/features/assets/AssetGrid.tsx` | **Fixed**: cards expose `role="gridcell"`, `aria-selected`, and asset-labelled checkboxes. Screen-reader behavior still requires manual verification. |
 
 
 The inventory intentionally separates root causes from user-visible effects. For example,
@@ -118,9 +118,9 @@ What was the actual bottleneck, and how did you find it?
 
 ## Accessibility
 
-- Keyboard model you implemented, in one paragraph.
-- How you tested it, including any screen reader.
-- Known gaps.
+- **Keyboard model:** the grid uses roving `tabIndex`, with one focused grid cell at a time. Arrow keys move by card or row, Enter opens the detail panel, Space toggles selection, and Shift + Space extends selection from the anchor. The detail panel focuses its Close button on open, closes on Escape, and restores focus to the originating card when closed.
+- **Testing:** TypeScript and production build checks pass. Manual keyboard and screen-reader verification is still outstanding and is not being claimed as complete.
+- **Known gaps:** screen-reader announcement quality and focus behavior when filtering removes the focused virtualized card need manual browser/assistive-technology verification.
 
 ---
 

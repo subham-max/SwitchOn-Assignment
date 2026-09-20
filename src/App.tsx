@@ -42,6 +42,7 @@ export function App() {
   const [retryableIds, setRetryableIds] = useState<string[]>([]);
   const [retryStatus, setRetryStatus] = useState<AssetStatus | null>(null);
   const selectionAnchor = useRef<string | null>(null);
+  const openedCardId = useRef<string | null>(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   const tags = tagInput.split(',').map((value) => value.trim()).filter(Boolean);
@@ -161,6 +162,19 @@ export function App() {
   const handleSaved = useCallback((asset: Asset) => {
     updateItems((current) => current.map((item) => item.id === asset.id ? asset : item));
   }, [updateItems]);
+
+  const openAsset = useCallback((id: string) => {
+    openedCardId.current = id;
+    setActiveId(id);
+  }, []);
+
+  const closeAsset = useCallback(() => {
+    setActiveId(null);
+    requestAnimationFrame(() => {
+      const card = openedCardId.current ? document.querySelector<HTMLElement>(`[data-asset-id="${openedCardId.current}"]`) : null;
+      (card ?? document.querySelector<HTMLElement>('[role="gridcell"]'))?.focus();
+    });
+  }, []);
 
   return (
     <div className="app">
@@ -284,7 +298,7 @@ export function App() {
                 selectedIds={selectedIds}
                 activeId={activeId}
                 onToggleSelect={toggleSelect}
-                onOpen={setActiveId}
+                onOpen={openAsset}
                 onReachEnd={hasMore && !loadingMore ? loadMore : undefined}
               />
               {loadingMore && <p className="load-more" role="status">Loading more assets…</p>}
@@ -292,7 +306,7 @@ export function App() {
           )}
         </div>
         {activeId && (
-          <AssetDetail id={activeId} onClose={() => setActiveId(null)} onSaved={handleSaved} />
+          <AssetDetail id={activeId} onClose={closeAsset} onSaved={handleSaved} />
         )}
       </main>
     </div>
