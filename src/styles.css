@@ -82,6 +82,23 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.offline-banner {
+  padding: 8px 16px;
+  color: #6b3d00;
+  background: #fff4e0;
+  border-bottom: 1px solid #ecd3a2;
+  font-size: 13px;
+}
+
+.app-error {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
 .search {
   flex: 1;
   max-width: 380px;

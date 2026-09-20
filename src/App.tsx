@@ -4,9 +4,10 @@ import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
 import { useAssets } from '@/features/assets/useAssets';
 import { statusLabel } from '@/lib/format';
-import type { Asset, AssetStatus, AssetQuery } from '@/lib/types';
+import type { Asset, AssetKind, AssetStatus, AssetQuery } from '@/lib/types';
 
 const STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
+const KINDS: AssetKind[] = ['image', 'video', 'document'];
 const SORTS: Array<{ value: NonNullable<AssetQuery['sort']>; label: string }> = [
   { value: 'updatedAt:desc', label: 'Recently updated' },
   { value: 'name:asc', label: 'Name A–Z' },
@@ -22,6 +23,8 @@ function initialQueryState() {
   return {
     q: params.get('q') ?? '',
     status: params.get('status')?.split(',').filter((value): value is AssetStatus => STATUSES.includes(value as AssetStatus)) ?? [],
+    kind: params.get('kind')?.split(',').filter((value): value is AssetKind => KINDS.includes(value as AssetKind)) ?? [],
+    tag: params.get('tag')?.split(',').map((value) => value.trim()).filter(Boolean) ?? [],
     sort: requestedSort && SORT_VALUES.has(requestedSort) ? requestedSort : 'updatedAt:desc' as const,
   };
 }
@@ -30,6 +33,8 @@ export function App() {
   const [initial] = useState(initialQueryState);
   const [q, setQ] = useState(initial.q);
   const [status, setStatus] = useState<AssetStatus[]>(initial.status);
+  const [kind, setKind] = useState<AssetKind[]>(initial.kind);
+  const [tagInput, setTagInput] = useState(initial.tag.join(', '));
   const [sort, setSort] = useState<NonNullable<AssetQuery['sort']>>(initial.sort);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -37,8 +42,21 @@ export function App() {
   const [retryableIds, setRetryableIds] = useState<string[]>([]);
   const [retryStatus, setRetryStatus] = useState<AssetStatus | null>(null);
   const selectionAnchor = useRef<string | null>(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
-  const { items, total, loading, loadingMore, error, hasMore, loadMore, updateItems } = useAssets({ q, status, sort, limit: 24 });
+  const tags = tagInput.split(',').map((value) => value.trim()).filter(Boolean);
+  const { items, total, loading, loadingMore, error, hasMore, loadMore, updateItems } = useAssets({ q, status, kind, tag: tags, sort, limit: 24 });
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -46,10 +64,14 @@ export function App() {
     else params.delete('q');
     if (status.length) params.set('status', status.join(','));
     else params.delete('status');
+    if (kind.length) params.set('kind', kind.join(','));
+    else params.delete('kind');
+    if (tags.length) params.set('tag', tags.join(','));
+    else params.delete('tag');
     params.set('sort', sort);
     const query = params.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
-  }, [q, status, sort]);
+  }, [q, status, kind, tagInput, sort]);
 
   const toggleSelect = useCallback((id: string, extendRange: boolean) => {
     setSelectedIds((prev) => {
@@ -160,6 +182,12 @@ export function App() {
         </select>
       </header>
 
+      {!isOnline && (
+        <div className="offline-banner" role="alert">
+          You are offline. Existing results remain available; reconnect to load or save changes.
+        </div>
+      )}
+
       <div className="filters">
         {STATUSES.map((s) => (
           <label key={s}>
@@ -175,6 +203,24 @@ export function App() {
             {statusLabel(s)}
           </label>
         ))}
+        {KINDS.map((assetKind) => (
+          <label key={assetKind}>
+            <input
+              type="checkbox"
+              checked={kind.includes(assetKind)}
+              onChange={(event) => setKind((current) => event.target.checked ? [...current, assetKind] : current.filter((value) => value !== assetKind))}
+            />
+            {assetKind}
+          </label>
+        ))}
+        <input
+          className="tag-filter"
+          type="search"
+          placeholder="Tags: hero, campaign"
+          value={tagInput}
+          onChange={(event) => setTagInput(event.target.value)}
+          aria-label="Filter by tags"
+        />
         <span className="muted" aria-live="polite">
           {loading ? 'Loading assets…' : `${items.length} of ${total.toLocaleString()} shown`}
         </span>

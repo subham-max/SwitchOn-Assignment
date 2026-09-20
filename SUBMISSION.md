@@ -31,7 +31,7 @@ Roughly, and how you split it.
 | 3 | Search requests are neither cancelled nor associated with a request identity. A slow response for an older query can overwrite the results for a newer query. | `src/features/assets/useAssets.ts`, `src/api/client.ts` | **Fixed**: each query owns an `AbortController`, cleanup cancels obsolete work, and inactive responses are ignored. |
 | 4 | Identical concurrent asset-list requests are not de-duplicated. Strict Mode, retries, or repeated mounts can issue duplicate network calls. | `src/api/client.ts`, `src/features/assets/useAssets.ts` | **Fixed**: requests share an in-flight promise keyed by the complete query, while each consumer retains independent cancellation. |
 | 5 | Pagination is not implemented. The hook requests only the first page and never follows `nextCursor`, so users cannot browse the full library. | `src/features/assets/useAssets.ts`, `src/App.tsx` | **Fixed for Task 1**: cursor pages append to the current result set through a guarded Load more action. Infinite scrolling remains Task 2. |
-| 6 | Query state is held only in React state. Search and status filters are lost on reload/share, and there is no URL representation for the current view. | `src/App.tsx` | **Fixed**: `q`, `status`, and `sort` initialize from and synchronize to URL query parameters using history replacement. |
+| 6 | Query state is held only in React state. Search and status filters are lost on reload/share, and there is no URL representation for the current view. | `src/App.tsx` | **Fixed**: `q`, `status`, `kind`, `tag`, and `sort` initialize from and synchronize to URL query parameters using history replacement. |
 | 7 | Filter and sort changes do not explicitly reset pagination because pagination is absent. Once pagination is added, reusing the old cursor would produce the API's `stale_cursor` error. | `src/App.tsx`, `src/features/assets/useAssets.ts` | **Fixed**: the query generation resets items and cursor; obsolete page requests cannot append to a newer query. |
 | 8 | Loading, empty, and failed states are not distinct. An empty result always renders the same empty message, while errors are rendered separately and the previous rows can remain visible during a new load. | `src/App.tsx`, `src/features/assets/useAssets.ts` | **Fixed**: initial loading, successful empty results, inline load errors, and populated results have separate UI states. |
 | 9 | The grid renders every item it receives and has no virtualization. Loading thousands of assets would grow the DOM with scroll distance and harm memory and scrolling performance. | `src/features/assets/AssetGrid.tsx` | **Fixed**: a fixed-row virtual grid renders only visible rows plus overscan while preserving the full scroll height. |
@@ -42,10 +42,10 @@ Roughly, and how you split it.
 | 14 | Single-asset saves do not handle `409 version_conflict` separately. The user receives a raw error and is not offered a refetch/review path. | `src/features/assets/AssetDetail.tsx`, `src/api/client.ts` | **Fixed**: the latest asset is refetched and the user must review it before choosing the status again. |
 | 15 | The API client has no retry, backoff, jitter, or `Retry-After` support for transient `503`, `429`, network, or safe-to-retry write failures. | `src/api/client.ts` | **Fixed**: retries are capped at three attempts, use exponential backoff with jitter, honor `Retry-After`, and only retry transient failures. |
 | 16 | API errors are flattened into strings, so callers cannot distinguish retryable failures, validation failures, conflicts, stale cursors, rate limits, and missing thumbnails without parsing text. | `src/api/client.ts` | **Fixed**: `ApiError` preserves HTTP status, API code, retryability, and human-readable copy. |
-| 17 | There is no offline detection or recovery state. The app continues making requests while offline and gives no user-oriented explanation when the connection returns or fails. | `src/App.tsx`, `src/api/client.ts` | Knowingly left: needs online/offline event handling and an offline banner. |
-| 18 | There is no error boundary. A render-time component failure can blank the entire page with no recovery action. | `src/main.tsx` | Knowingly left: needs a component-level boundary with retry/reload. |
+| 17 | There is no offline detection or recovery state. The app continues making requests while offline and gives no user-oriented explanation when the connection returns or fails. | `src/App.tsx`, `src/api/client.ts`, `src/features/assets/useAssets.ts` | **Fixed**: offline/online events drive a banner, new requests stop while offline, and the active query reloads after reconnection. Writes are not queued; the user is asked to reconnect and retry. |
+| 18 | There is no error boundary. A render-time component failure can blank the entire page with no recovery action. | `src/main.tsx` | **Fixed**: a component-level boundary reports the failure and offers an application reload action. |
 | 19 | The asset cards are clickable `div` elements without grid semantics, keyboard handlers, roving tabindex, arrow navigation, Enter, Space, or Shift-range selection. | `src/features/assets/AssetGrid.tsx` | Knowingly left for Task 5: pointer Shift-range selection is fixed in Task 3, but keyboard range selection remains. |
-| 20 | The checkboxes have no asset-specific accessible name, and selection state is not exposed through `aria-selected` or equivalent grid semantics. | `src/features/assets/AssetGrid.tsx` | Knowingly left: needs explicit accessible labeling and state. |
+| 20 | Selection state is not exposed through `aria-selected` or equivalent grid semantics. | `src/features/assets/AssetGrid.tsx` | Knowingly left for Task 5: checkboxes now have asset-specific accessible names, but grid selection semantics remain. |
 
 
 The inventory intentionally separates root causes from user-visible effects. For example,
@@ -76,9 +76,21 @@ controller, and accepts a page only when its generation is still current.
 
 **Virtualization approach**
 
+The grid uses fixed row geometry, overscan, and a spacer so only viewport-adjacent cards
+are mounted while the scroll height still represents the full result set.
+
 **Optimistic updates and rollback**
 
+Bulk failures are separated into retryable and permanent groups. Legal-hold and missing
+asset failures are explained and excluded from retry; temporary failures remain available
+through a dedicated retry action.
+
 **Retry and backoff policy**
+
+The client retries only transient failures, for a maximum of three attempts, using capped
+exponential backoff with jitter and the server's `Retry-After` value. Offline state is not
+treated as a retry storm: requests stop immediately and the active query resumes on the
+browser's `online` event. Writes made while offline are intentionally not queued.
 
 **State placement and URL sync**
 

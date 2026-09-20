@@ -25,6 +25,13 @@ export function useAssets(query: AssetQuery) {
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const loadingMore = useRef(false);
+  const [onlineVersion, setOnlineVersion] = useState(0);
+
+  useEffect(() => {
+    const handleOnline = () => setOnlineVersion((version) => version + 1);
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []);
 
   useEffect(() => {
     const currentGeneration = generation.current + 1;
@@ -33,6 +40,10 @@ export function useAssets(query: AssetQuery) {
     const requestController = new AbortController();
     controller.current = requestController;
     loadingMore.current = false;
+    if (!navigator.onLine) {
+      setState({ ...INITIAL_STATE, loading: false, error: 'You are offline. Reconnect to load assets.' });
+      return () => requestController.abort();
+    }
     setState({ ...INITIAL_STATE });
 
     const timeout = window.setTimeout(() => {
@@ -58,7 +69,7 @@ export function useAssets(query: AssetQuery) {
       window.clearTimeout(timeout);
       requestController.abort();
     };
-  }, [JSON.stringify(query)]);
+  }, [JSON.stringify(query), onlineVersion]);
 
   function loadMore() {
     if (!state.nextCursor || state.loading || loadingMore.current) return;

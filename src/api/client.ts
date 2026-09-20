@@ -40,6 +40,7 @@ function isRetryableStatus(status: number, method: string): boolean {
 }
 
 function userMessage(code: string, status: number, fallback: string): string {
+  if (code === 'offline') return 'You are offline. Reconnect to continue working.';
   if (code === 'rate_limited') return 'The service is busy. We will try again shortly.';
   if (code === 'upstream_unavailable') return 'The service is temporarily unavailable.';
   if (code === 'version_conflict') return 'This asset changed before your edit was saved.';
@@ -61,6 +62,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new ApiError(userMessage('offline', 0, ''), 0, 'offline', false);
+      }
       const res = await fetch(path, {
         ...init,
         headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
@@ -86,6 +90,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new ApiError(userMessage('offline', 0, ''), 0, 'offline', false);
+      }
       if (attempt < maxAttempts - 1) {
         await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, null)));
         continue;
