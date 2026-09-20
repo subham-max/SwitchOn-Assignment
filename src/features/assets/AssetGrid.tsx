@@ -1,5 +1,5 @@
 import { thumbnailUrl } from '@/api/client';
-import { useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { formatBytes, formatDate, statusLabel } from '@/lib/format';
 import type { Asset } from '@/lib/types';
 
@@ -9,13 +9,58 @@ interface Props {
   activeId: string | null;
   onToggleSelect: (id: string) => void;
   onOpen: (id: string) => void;
+  onReachEnd?: () => void;
 }
 
 /**
  * Baseline grid. Renders every row it is given, re-renders every card on any
  * selection change, and is not reachable by keyboard.
  */
-export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpen }: Props) {
+const CARD_MIN_WIDTH = 220;
+const CARD_HEIGHT = 278;
+const GRID_GAP = 12;
+const GRID_PADDING = 16;
+
+export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpen, onReachEnd }: Props) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = useState(1);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateSize = () => {
+      const availableWidth = viewport.clientWidth - GRID_PADDING * 2 + GRID_GAP;
+      setColumns(Math.max(1, Math.floor(availableWidth / (CARD_MIN_WIDTH + GRID_GAP))));
+      setViewportHeight(viewport.clientHeight);
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport && onReachEnd && viewport.scrollHeight <= viewport.clientHeight) onReachEnd();
+  }, [assets.length, onReachEnd]);
+
+  const rowCount = Math.ceil(assets.length / columns);
+  const rowStride = CARD_HEIGHT + GRID_GAP;
+  const firstRow = Math.max(0, Math.floor(scrollTop / rowStride) - 2);
+  const visibleRows = Math.ceil(viewportHeight / rowStride) + 4;
+  const lastRow = Math.min(rowCount, firstRow + visibleRows);
+  const visibleAssets = assets.slice(firstRow * columns, lastRow * columns);
+
+  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+    const nextScrollTop = event.currentTarget.scrollTop;
+    setScrollTop(nextScrollTop);
+    if (onReachEnd && event.currentTarget.scrollHeight - nextScrollTop - event.currentTarget.clientHeight < rowStride * 3) {
+      onReachEnd();
+    }
+  }
+
   if (assets.length === 0) {
     return (
       <div className="empty">
@@ -26,8 +71,10 @@ export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpe
   }
 
   return (
-    <div className="grid">
-      {assets.map((asset) => (
+    <div ref={viewportRef} className="grid" onScroll={handleScroll}>
+      <div className="grid__spacer" style={{ height: Math.max(0, rowCount * rowStride - GRID_GAP + GRID_PADDING * 2) }}>
+        <div className="grid__window" style={{ transform: `translateY(${firstRow * rowStride + GRID_PADDING}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+      {visibleAssets.map((asset) => (
         <AssetCard
           key={asset.id}
           asset={asset}
@@ -37,11 +84,13 @@ export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpe
           onOpen={onOpen}
         />
       ))}
+        </div>
+      </div>
     </div>
   );
 }
 
-function AssetCard({ asset, selected, active, onToggleSelect, onOpen }: {
+const AssetCard = memo(function AssetCard({ asset, selected, active, onToggleSelect, onOpen }: {
   asset: Asset;
   selected: boolean;
   active: boolean;
@@ -75,4 +124,4 @@ function AssetCard({ asset, selected, active, onToggleSelect, onOpen }: {
       />
     </div>
   );
-}
+});

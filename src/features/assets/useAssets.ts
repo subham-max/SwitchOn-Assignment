@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listAssets } from '@/api/client';
 import type { Asset, AssetQuery } from '@/lib/types';
 
@@ -88,9 +88,9 @@ export function useAssets(query: AssetQuery) {
       });
   }
 
-  function updateItems(update: (items: Asset[]) => Asset[]) {
+  const updateItems = useCallback((update: (items: Asset[]) => Asset[]) => {
     setState((current) => ({ ...current, items: update(current.items) }));
-  }
+  }, []);
 
   return { ...state, hasMore: Boolean(state.nextCursor), loadMore, updateItems };
 }

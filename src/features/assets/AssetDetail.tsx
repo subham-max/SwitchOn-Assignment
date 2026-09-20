@@ -17,11 +17,13 @@ interface Props {
  */
 export function AssetDetail({ id, onClose, onSaved }: Props) {
   const [asset, setAsset] = useState<Asset | null>(null);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setAsset(null);
+    setThumbnailFailed(false);
     setError(null);
     getAsset(id)
       .then(setAsset)
@@ -55,7 +57,11 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
 
       {asset && (
         <div className="panel__body">
-          <img className="panel__thumb" src={thumbnailUrl(asset.id)} alt="" />
+          {thumbnailFailed || !asset.hasThumbnail ? (
+            <div className="panel__thumb panel__thumb--missing" role="img" aria-label="Thumbnail unavailable">No preview</div>
+          ) : (
+            <img className="panel__thumb" src={thumbnailUrl(asset.id)} alt="" onError={() => setThumbnailFailed(true)} />
+          )}
           <h3>{asset.name}</h3>
           <dl className="facts">
             <dt>Id</dt>

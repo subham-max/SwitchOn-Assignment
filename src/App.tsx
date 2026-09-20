@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ApiError, bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
@@ -47,14 +47,14 @@ export function App() {
     window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
   }, [q, status, sort]);
 
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   async function applyBulkStatus(next: AssetStatus) {
     const ids = [...selectedIds];
@@ -109,9 +109,9 @@ export function App() {
     }
   }
 
-  function handleSaved(asset: Asset) {
+  const handleSaved = useCallback((asset: Asset) => {
     updateItems((current) => current.map((item) => item.id === asset.id ? asset : item));
-  }
+  }, [updateItems]);
 
   return (
     <div className="app">
@@ -190,12 +190,9 @@ export function App() {
                 activeId={activeId}
                 onToggleSelect={toggleSelect}
                 onOpen={setActiveId}
+                onReachEnd={hasMore && !loadingMore ? loadMore : undefined}
               />
-              {hasMore && (
-                <button className="load-more" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? 'Loading more…' : 'Load more assets'}
-                </button>
-              )}
+              {loadingMore && <p className="load-more" role="status">Loading more assets…</p>}
             </>
           )}
         </div>

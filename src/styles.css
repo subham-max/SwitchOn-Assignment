@@ -141,15 +141,27 @@ button:disabled {
 .grid {
   flex: 1;
   overflow: auto;
+  min-height: 0;
+  padding: 0;
+}
+
+.grid__spacer {
+  position: relative;
+  width: 100%;
+}
+
+.grid__window {
+  position: absolute;
+  top: 0;
+  right: 16px;
+  left: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
-  padding: 16px;
-  align-content: start;
 }
 
 .card {
   position: relative;
+  height: 278px;
   border: 1px solid var(--line);
   border-radius: 6px;
   overflow: hidden;
@@ -227,9 +239,16 @@ button:disabled {
 }
 .panel__thumb {
   width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
   border-radius: 6px;
   margin-top: 12px;
   background: var(--bg-soft);
+}
+.panel__thumb--missing {
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
 }
 
 .facts {
@@ -275,7 +294,7 @@ button:disabled {
 
 .load-more {
   align-self: center;
-  margin: 0 16px 16px;
+  margin: 8px 16px 16px;
 }
 
 @media (max-width: 720px) {
