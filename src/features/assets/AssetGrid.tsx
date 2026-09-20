@@ -7,7 +7,7 @@ interface Props {
   assets: Asset[];
   selectedIds: Set<string>;
   activeId: string | null;
-  onToggleSelect: (id: string) => void;
+  onToggleSelect: (id: string, extendRange: boolean) => void;
   onOpen: (id: string) => void;
   onReachEnd?: () => void;
 }
@@ -94,7 +94,7 @@ const AssetCard = memo(function AssetCard({ asset, selected, active, onToggleSel
   asset: Asset;
   selected: boolean;
   active: boolean;
-  onToggleSelect: (id: string) => void;
+  onToggleSelect: (id: string, extendRange: boolean) => void;
   onOpen: (id: string) => void;
 }) {
   const [thumbnailFailed, setThumbnailFailed] = useState(!asset.hasThumbnail);
@@ -119,8 +119,11 @@ const AssetCard = memo(function AssetCard({ asset, selected, active, onToggleSel
         className="card__check"
         aria-label={`Select ${asset.name}`}
         checked={selected}
-        onClick={(event) => event.stopPropagation()}
-        onChange={() => onToggleSelect(asset.id)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleSelect(asset.id, event.shiftKey);
+        }}
+        onChange={() => undefined}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAsset, thumbnailUrl, updateAsset } from '@/api/client';
+import { ApiError, getAsset, thumbnailUrl, updateAsset } from '@/api/client';
 import { formatBytes, formatDate, formatDuration, statusLabel } from '@/lib/format';
 import type { Asset, AssetStatus } from '@/lib/types';
 
@@ -39,7 +39,17 @@ export function AssetDetail({ id, onClose, onSaved }: Props) {
       setAsset(updated);
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      if (err instanceof ApiError && err.code === 'version_conflict') {
+        try {
+          const latest = await getAsset(asset.id);
+          setAsset(latest);
+          setError('This asset changed while you were editing it. Review the latest version, then choose the status again.');
+        } catch (refreshError) {
+          setError(refreshError instanceof Error ? refreshError.message : 'The asset changed and could not be refreshed.');
+        }
+      } else {
+        setError(err instanceof Error ? err.message : 'Save failed');
+      }
     } finally {
       setSaving(false);
     }

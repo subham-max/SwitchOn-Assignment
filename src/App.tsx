@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
@@ -14,6 +14,7 @@ const SORTS: Array<{ value: NonNullable<AssetQuery['sort']>; label: string }> = 
   { value: 'createdAt:desc', label: 'Newest' },
 ];
 const SORT_VALUES = new Set(SORTS.map((option) => option.value));
+const RETRYABLE_BULK_CODES = new Set(['conflict', 'request_failed', 'network_error', 'rate_limited', 'upstream_unavailable', 'write_failed']);
 
 function initialQueryState() {
   const params = new URLSearchParams(window.location.search);
@@ -33,6 +34,9 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [retryableIds, setRetryableIds] = useState<string[]>([]);
+  const [retryStatus, setRetryStatus] = useState<AssetStatus | null>(null);
+  const selectionAnchor = useRef<string | null>(null);
 
   const { items, total, loading, loadingMore, error, hasMore, loadMore, updateItems } = useAssets({ q, status, sort, limit: 24 });
 
@@ -47,22 +51,40 @@ export function App() {
     window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
   }, [q, status, sort]);
 
-  const toggleSelect = useCallback((id: string) => {
+  const toggleSelect = useCallback((id: string, extendRange: boolean) => {
     setSelectedIds((prev) => {
+      if (extendRange && selectionAnchor.current) {
+        const anchorIndex = items.findIndex((asset) => asset.id === selectionAnchor.current);
+        const targetIndex = items.findIndex((asset) => asset.id === id);
+        if (anchorIndex >= 0 && targetIndex >= 0) {
+          const start = Math.min(anchorIndex, targetIndex);
+          const end = Math.max(anchorIndex, targetIndex);
+          const next = new Set(prev);
+          items.slice(start, end + 1).forEach((asset) => next.add(asset.id));
+          return next;
+        }
+      }
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+    selectionAnchor.current = id;
+  }, [items]);
 
-  async function applyBulkStatus(next: AssetStatus) {
-    const ids = [...selectedIds];
+  const selectAllLoaded = useCallback(() => {
+    setSelectedIds(new Set(items.map((asset) => asset.id)));
+    selectionAnchor.current = items[0]?.id ?? null;
+  }, [items]);
+
+  async function applyBulkStatus(next: AssetStatus, requestedIds = [...selectedIds]) {
+    const ids = requestedIds;
     if (ids.length === 0) return;
     setNotice(null);
 
-    const previous = new Map(items.filter((asset) => selectedIds.has(asset.id)).map((asset) => [asset.id, asset]));
-    updateItems((current) => current.map((asset) => (selectedIds.has(asset.id) ? { ...asset, status: next } : asset)));
+    const requestedSet = new Set(requestedIds);
+    const previous = new Map(items.filter((asset) => requestedSet.has(asset.id)).map((asset) => [asset.id, asset]));
+    updateItems((current) => current.map((asset) => (requestedSet.has(asset.id) ? { ...asset, status: next } : asset)));
 
     const chunks: string[][] = [];
     for (let index = 0; index < ids.length; index += 50) chunks.push(ids.slice(index, index + 50));
@@ -99,9 +121,14 @@ export function App() {
       const failedIds = new Set(failures.map(({ id }) => id));
       updateItems((current) => current.map((asset) => failedIds.has(asset.id) ? previous.get(asset.id) ?? asset : asset));
       const applied = ids.length - failures.length;
+      const retryable = failures.filter((failure) => RETRYABLE_BULK_CODES.has(failure.code));
+      const permanent = failures.filter((failure) => !RETRYABLE_BULK_CODES.has(failure.code));
+      const permanentDetails = permanent.slice(0, 3).map(({ id, code }) => `${id} (${code === 'legal_hold' ? 'legal hold' : code === 'not_found' ? 'no longer exists' : 'not changed'})`).join(', ');
+      setRetryableIds(retryable.map(({ id }) => id));
+      setRetryStatus(retryable.length > 0 ? next : null);
       setNotice(failures.length === 0
         ? `${applied} assets updated successfully.`
-        : `${applied} updated. ${failures.length} failed: ${failures.slice(0, 3).map((failure) => `${failure.id} (${failure.code})`).join(', ')}${failures.length > 3 ? ', and more.' : '.'}`);
+        : `${applied} updated. ${retryable.length > 0 ? `${retryable.length} temporary failure${retryable.length === 1 ? '' : 's'} can be retried. ` : ''}${permanent.length > 0 ? `${permanent.length} permanent failure${permanent.length === 1 ? '' : 's'}: ${permanentDetails}${permanent.length > 3 ? ', and more.' : '.'}` : ''}`);
       setSelectedIds(new Set(failures.map(({ id }) => id)));
     } catch (err) {
       updateItems((current) => current.map((asset) => previous.get(asset.id) ?? asset));
@@ -153,7 +180,20 @@ export function App() {
         </span>
       </div>
 
-      {selectedIds.size > 0 && (
+      {items.length > 0 && (
+        <div className="bulkbar">
+          <span>{selectedIds.size} selected of {items.length} loaded</span>
+          <button onClick={selectAllLoaded} disabled={selectedIds.size === items.length}>Select all loaded</button>
+          {selectedIds.size > 0 && <button onClick={() => setSelectedIds(new Set())}>Clear selection</button>}
+          {selectedIds.size > 0 && STATUSES.map((s) => (
+            <button key={s} onClick={() => applyBulkStatus(s)}>
+              Set {statusLabel(s).toLowerCase()}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selectedIds.size > 0 && items.length === 0 && (
         <div className="bulkbar">
           <span>{selectedIds.size} selected</span>
           {STATUSES.map((s) => (
@@ -165,7 +205,16 @@ export function App() {
         </div>
       )}
 
-      {notice && <p className="notice">{notice}</p>}
+      {notice && (
+        <div className="notice" role="status">
+          <span>{notice}</span>
+          {retryableIds.length > 0 && retryStatus && (
+            <button onClick={() => applyBulkStatus(retryStatus, retryableIds)}>
+              Retry {retryableIds.length} temporary failure{retryableIds.length === 1 ? '' : 's'}
+            </button>
+          )}
+        </div>
+      )}
       {error && items.length > 0 && <p className="error">{error}</p>}
 
       <main className="content">
