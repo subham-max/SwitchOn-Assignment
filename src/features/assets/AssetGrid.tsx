@@ -1,4 +1,5 @@
 import { thumbnailUrl } from '@/api/client';
+import { useState } from 'react';
 import { formatBytes, formatDate, statusLabel } from '@/lib/format';
 import type { Asset } from '@/lib/types';
 
@@ -27,32 +28,51 @@ export function AssetGrid({ assets, selectedIds, activeId, onToggleSelect, onOpe
   return (
     <div className="grid">
       {assets.map((asset) => (
-        <div
+        <AssetCard
           key={asset.id}
-          className={
-            'card' +
-            (selectedIds.has(asset.id) ? ' card--selected' : '') +
-            (activeId === asset.id ? ' card--active' : '')
-          }
-          onClick={() => onOpen(asset.id)}
-        >
-          <img className="card__thumb" src={thumbnailUrl(asset.id)} alt="" />
-          <div className="card__body">
-            <p className="card__name">{asset.name}</p>
-            <p className="muted">
-              {asset.kind} · {formatBytes(asset.sizeBytes)} · {formatDate(asset.updatedAt)}
-            </p>
-            <span className={`pill pill--${asset.status}`}>{statusLabel(asset.status)}</span>
-          </div>
-          <input
-            type="checkbox"
-            className="card__check"
-            checked={selectedIds.has(asset.id)}
-            onClick={(e) => e.stopPropagation()}
-            onChange={() => onToggleSelect(asset.id)}
-          />
-        </div>
+          asset={asset}
+          selected={selectedIds.has(asset.id)}
+          active={activeId === asset.id}
+          onToggleSelect={onToggleSelect}
+          onOpen={onOpen}
+        />
       ))}
+    </div>
+  );
+}
+
+function AssetCard({ asset, selected, active, onToggleSelect, onOpen }: {
+  asset: Asset;
+  selected: boolean;
+  active: boolean;
+  onToggleSelect: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const [thumbnailFailed, setThumbnailFailed] = useState(!asset.hasThumbnail);
+
+  return (
+    <div
+      className={'card' + (selected ? ' card--selected' : '') + (active ? ' card--active' : '')}
+      onClick={() => onOpen(asset.id)}
+    >
+      {thumbnailFailed ? (
+        <div className="card__thumb card__thumb--missing" role="img" aria-label="Thumbnail unavailable">No preview</div>
+      ) : (
+        <img className="card__thumb" src={thumbnailUrl(asset.id)} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />
+      )}
+      <div className="card__body">
+        <p className="card__name">{asset.name}</p>
+        <p className="muted">{asset.kind} · {formatBytes(asset.sizeBytes)} · {formatDate(asset.updatedAt)}</p>
+        <span className={`pill pill--${asset.status}`}>{statusLabel(asset.status)}</span>
+      </div>
+      <input
+        type="checkbox"
+        className="card__check"
+        aria-label={`Select ${asset.name}`}
+        checked={selected}
+        onClick={(event) => event.stopPropagation()}
+        onChange={() => onToggleSelect(asset.id)}
+      />
     </div>
   );
 }

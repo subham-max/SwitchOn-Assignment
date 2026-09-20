@@ -1,15 +1,18 @@
 import type { Asset, AssetPage, AssetQuery, BulkResult } from '@/lib/types';
 
-/**
- * Baseline client. It works on a good network and falls apart on a bad one.
- *
- * Known gaps, all of which are yours to close:
- *   - no request cancellation
- *   - no retry, no backoff, no handling of Retry-After
- *   - no de-duplication of concurrent identical requests
- *   - error information is flattened into a string
- *   - callers cannot distinguish "retry this" from "do not retry this"
- */
+/** Shared request handling keeps transient failures and API error codes explicit. */
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 function toSearchParams(query: AssetQuery): string {
   const params = new URLSearchParams();
@@ -25,26 +28,119 @@ function toSearchParams(query: AssetQuery): string {
   return params.toString();
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body?.error?.message ?? detail;
-    } catch {
-      /* response was not JSON */
-    }
-    throw new Error(`${res.status}: ${detail}`);
-  }
-  return res.json() as Promise<T>;
+function retryDelay(attempt: number, retryAfter: string | null): number {
+  const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : 0;
+  const exponentialMs = Math.min(4000, 300 * 2 ** attempt);
+  const jitterMs = Math.round(Math.random() * 200);
+  return Math.max(retryAfterMs, exponentialMs + jitterMs);
 }
 
-export function listAssets(query: AssetQuery): Promise<AssetPage> {
-  return request<AssetPage>(`/api/assets?${toSearchParams(query)}`);
+function isRetryableStatus(status: number, method: string): boolean {
+  return status === 429 || status === 503 || (status === 500 && method !== 'GET');
+}
+
+function userMessage(code: string, status: number, fallback: string): string {
+  if (code === 'rate_limited') return 'The service is busy. We will try again shortly.';
+  if (code === 'upstream_unavailable') return 'The service is temporarily unavailable.';
+  if (code === 'version_conflict') return 'This asset changed before your edit was saved.';
+  if (code === 'stale_cursor') return 'The results changed. Refreshing this view is required.';
+  return status >= 500 ? 'The service could not complete that request.' : fallback;
+}
+
+interface InFlightAssetRequest {
+  controller: AbortController;
+  consumers: number;
+  promise: Promise<AssetPage>;
+}
+
+const inFlightAssetRequests = new Map<string, InFlightAssetRequest>();
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? 'GET';
+  const maxAttempts = 3;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const res = await fetch(path, {
+        ...init,
+        headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      });
+      if (res.ok) return res.json() as Promise<T>;
+
+      let code = 'request_failed';
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        code = body?.error?.code ?? code;
+        detail = body?.error?.message ?? detail;
+      } catch {
+        /* response was not JSON */
+      }
+
+      const retryable = isRetryableStatus(res.status, method);
+      if (retryable && attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, res.headers.get('retry-after'))));
+        continue;
+      }
+      throw new ApiError(userMessage(code, res.status, detail), res.status, code, retryable);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, null)));
+        continue;
+      }
+      throw new ApiError('The network connection failed. Please try again.', 0, 'network_error', true);
+    }
+  }
+
+  throw new ApiError('The request could not be completed.', 0, 'request_failed', false);
+}
+
+export function listAssets(query: AssetQuery, signal?: AbortSignal): Promise<AssetPage> {
+  const key = toSearchParams(query);
+  let entry = inFlightAssetRequests.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    const promise = request<AssetPage>(`/api/assets?${key}`, { signal: controller.signal });
+    entry = { controller, consumers: 0, promise };
+    inFlightAssetRequests.set(key, entry);
+    promise.finally(() => {
+      if (inFlightAssetRequests.get(key)?.promise === promise) inFlightAssetRequests.delete(key);
+    }).catch(() => undefined);
+  }
+
+  const requestEntry = entry;
+  requestEntry.consumers += 1;
+  return new Promise<AssetPage>((resolve, reject) => {
+    let settled = false;
+    const release = () => {
+      if (settled) return;
+      settled = true;
+      requestEntry.consumers -= 1;
+      signal?.removeEventListener('abort', onAbort);
+      if (requestEntry.consumers === 0) {
+        requestEntry.controller.abort();
+        if (inFlightAssetRequests.get(key)?.promise === requestEntry.promise) inFlightAssetRequests.delete(key);
+      }
+    };
+    const onAbort = () => {
+      release();
+      reject(new DOMException('The request was aborted.', 'AbortError'));
+    };
+
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    requestEntry.promise.then((page) => {
+      if (settled) return;
+      release();
+      resolve(page);
+    }, (error: unknown) => {
+      if (settled) return;
+      release();
+      reject(error);
+    });
+  });
 }
 
 export function getAsset(id: string): Promise<Asset> {

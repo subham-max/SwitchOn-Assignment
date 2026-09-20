@@ -26,8 +26,34 @@ Roughly, and how you split it.
 
 | # | Defect | Where | Fixed / left / out of scope |
 | --- | --- | --- | --- |
-| 1 | Bulk update sends >50 ids in one call | `App.tsx` | |
-| 2 | | | |
+| 1 | Bulk update sends the complete selection in one request, but the API caps bulk requests at 50 IDs. Any selection above 50 fails with `too_many_ids`. | `src/App.tsx`, `src/api/client.ts` | **Fixed**: selections are split into 50-ID chunks and processed with three concurrent workers. |
+| 2 | Search sends a request on every keystroke, which wastes requests and can trigger the rolling rate limit during normal typing. | `src/App.tsx`, `src/features/assets/useAssets.ts` | **Fixed**: asset loading is debounced by 300 ms. |
+| 3 | Search requests are neither cancelled nor associated with a request identity. A slow response for an older query can overwrite the results for a newer query. | `src/features/assets/useAssets.ts`, `src/api/client.ts` | **Fixed**: each query owns an `AbortController`, cleanup cancels obsolete work, and inactive responses are ignored. |
+| 4 | Identical concurrent asset-list requests are not de-duplicated. Strict Mode, retries, or repeated mounts can issue duplicate network calls. | `src/api/client.ts`, `src/features/assets/useAssets.ts` | **Fixed**: requests share an in-flight promise keyed by the complete query, while each consumer retains independent cancellation. |
+| 5 | Pagination is not implemented. The hook requests only the first page and never follows `nextCursor`, so users cannot browse the full library. | `src/features/assets/useAssets.ts`, `src/App.tsx` | **Fixed for Task 1**: cursor pages append to the current result set through a guarded Load more action. Infinite scrolling remains Task 2. |
+| 6 | Query state is held only in React state. Search and status filters are lost on reload/share, and there is no URL representation for the current view. | `src/App.tsx` | **Fixed**: `q`, `status`, and `sort` initialize from and synchronize to URL query parameters using history replacement. |
+| 7 | Filter and sort changes do not explicitly reset pagination because pagination is absent. Once pagination is added, reusing the old cursor would produce the API's `stale_cursor` error. | `src/App.tsx`, `src/features/assets/useAssets.ts` | **Fixed**: the query generation resets items and cursor; obsolete page requests cannot append to a newer query. |
+| 8 | Loading, empty, and failed states are not distinct. An empty result always renders the same empty message, while errors are rendered separately and the previous rows can remain visible during a new load. | `src/App.tsx`, `src/features/assets/useAssets.ts` | **Fixed**: initial loading, successful empty results, inline load errors, and populated results have separate UI states. |
+| 9 | The grid renders every item it receives and has no virtualization. Loading thousands of assets would grow the DOM with scroll distance and harm memory and scrolling performance. | `src/features/assets/AssetGrid.tsx` | Knowingly left: needs windowed rendering. |
+| 10 | A selection change updates the parent `Set` and rerenders the whole grid; cards are not memoized or isolated. This makes selecting hundreds of assets unnecessarily expensive. | `src/App.tsx`, `src/features/assets/AssetGrid.tsx` | Knowingly left: needs memoized cards and stable props. |
+| 11 | Thumbnails are always requested, even when `hasThumbnail` is false, and there is no `onError` fallback. A missing thumbnail produces a broken image instead of a stable placeholder. | `src/features/assets/AssetGrid.tsx`, `src/features/assets/AssetDetail.tsx` | **Fixed in the grid**: thumbnails lazy-load, skip known missing images, and replace `404` failures with a fixed “No preview” placeholder. Detail-panel fallback remains to do. |
+| 12 | Bulk updates are treated as all-or-nothing. The `207` per-item result is reduced to a count, successful assets are not reconciled locally, failed assets are not rolled back individually, and there is no retry/undo subset. | `src/App.tsx` | **Fixed**: updates are optimistic, chunks respect the 50-ID cap, successes are kept, failures roll back individually, reasons are displayed, and failed IDs remain selected for retry. |
+| 13 | The list is not updated after a successful single-asset edit. `handleSaved` deliberately ignores the returned asset, so the grid can display stale status/version data. | `src/App.tsx`, `src/features/assets/AssetDetail.tsx` | **Fixed**: the returned asset replaces the matching item in the loaded list. |
+| 14 | Single-asset saves do not handle `409 version_conflict` separately. The user receives a raw error and is not offered a refetch/review path. | `src/features/assets/AssetDetail.tsx`, `src/api/client.ts` | Knowingly left: needs structured conflict handling. |
+| 15 | The API client has no retry, backoff, jitter, or `Retry-After` support for transient `503`, `429`, network, or safe-to-retry write failures. | `src/api/client.ts` | **Fixed**: retries are capped at three attempts, use exponential backoff with jitter, honor `Retry-After`, and only retry transient failures. |
+| 16 | API errors are flattened into strings, so callers cannot distinguish retryable failures, validation failures, conflicts, stale cursors, rate limits, and missing thumbnails without parsing text. | `src/api/client.ts` | **Fixed**: `ApiError` preserves HTTP status, API code, retryability, and human-readable copy. |
+| 17 | There is no offline detection or recovery state. The app continues making requests while offline and gives no user-oriented explanation when the connection returns or fails. | `src/App.tsx`, `src/api/client.ts` | Knowingly left: needs online/offline event handling and an offline banner. |
+| 18 | There is no error boundary. A render-time component failure can blank the entire page with no recovery action. | `src/main.tsx` | Knowingly left: needs a component-level boundary with retry/reload. |
+| 19 | The asset cards are clickable `div` elements without grid semantics, keyboard handlers, roving tabindex, arrow navigation, Enter, Space, or Shift-range selection. | `src/features/assets/AssetGrid.tsx` | Knowingly left: needs an accessible grid interaction model. |
+| 20 | The checkboxes have no asset-specific accessible name, and selection state is not exposed through `aria-selected` or equivalent grid semantics. | `src/features/assets/AssetGrid.tsx` | Knowingly left: needs explicit accessible labeling and state. |
+
+
+The inventory intentionally separates root causes from user-visible effects. For example,
+the search race is caused by missing cancellation and stale-response protection, while
+the wrong rows shown to a producer are the consequence. I will change each row to
+**fixed** only after implementing and testing the corresponding behavior; optional live
+updates, statistics, and automated tests are not baseline defects and remain separate
+scope decisions below.
 
 ---
 
@@ -38,7 +64,15 @@ six of these is about right.
 
 **Data fetching and caching**
 
+Asset-list requests are keyed by their serialized query parameters. Identical in-flight
+requests share one underlying fetch, while consumers can abort independently. I kept this
+small rather than adding a data-fetching library because the assessment specifically tests
+request ownership and cancellation.
+
 **Stale response handling**
+
+Search input uses a 300 ms debounce. Each query increments a generation, aborts its previous
+controller, and accepts a page only when its generation is still current.
 
 **Virtualization approach**
 
@@ -47,6 +81,10 @@ six of these is about right.
 **Retry and backoff policy**
 
 **State placement and URL sync**
+
+The search, status, and sort values are initialized from `URLSearchParams` and written with
+`history.replaceState`, so reloads and shared links restore the view without creating one
+history entry per typed character. A changed query resets the cursor and loaded items.
 
 ---
 
