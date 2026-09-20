@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, bulkSetStatus } from '@/api/client';
+import { ApiError, bulkSetStatus, getStats, type LibraryStats } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
 import { useAssets } from '@/features/assets/useAssets';
-import { statusLabel } from '@/lib/format';
+import { formatBytes, statusLabel } from '@/lib/format';
 import type { Asset, AssetKind, AssetStatus, AssetQuery } from '@/lib/types';
 
 const STATUSES: AssetStatus[] = ['draft', 'in_review', 'approved', 'archived'];
@@ -44,9 +44,15 @@ export function App() {
   const selectionAnchor = useRef<string | null>(null);
   const openedCardId = useRef<string | null>(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [stats, setStats] = useState<LibraryStats | null>(null);
 
   const tags = tagInput.split(',').map((value) => value.trim()).filter(Boolean);
   const { items, total, loading, loadingMore, error, hasMore, loadMore, updateItems } = useAssets({ q, status, kind, tag: tags, sort, limit: 24 });
+
+  useEffect(() => {
+    if (!isOnline) return;
+    getStats().then(setStats).catch(() => undefined);
+  }, [isOnline]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -179,7 +185,13 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>MediaVault</h1>
+        <div className="brand">
+          <span className="brand__mark" aria-hidden="true">MV</span>
+          <div>
+            <h1>MediaVault</h1>
+            <p>Asset library</p>
+          </div>
+        </div>
         <input
           className="search"
           type="search"
@@ -194,6 +206,10 @@ export function App() {
             </option>
           ))}
         </select>
+        <div className="stats" aria-label="Library summary">
+          <strong>{stats ? stats.total.toLocaleString() : '—'}</strong>
+          <span>{stats ? `${formatBytes(stats.totalBytes)} indexed` : 'assets in library'}</span>
+        </div>
       </header>
 
       {!isOnline && (

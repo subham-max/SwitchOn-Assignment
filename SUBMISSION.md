@@ -8,17 +8,26 @@ chose not to do something.
 
 Paste your Loom (or equivalent) link here. 5–10 minutes.
 
-**Link:**
+**Link:** Pending recording.
 
 ---
 
 ## How to run it
 
-Anything we need to know beyond `npm install && npm run dev`.
+```bash
+npm install
+npm run dev
+```
+
+The app runs at `http://localhost:5173` and the mock API at `http://localhost:8787`.
+Check `/api/health` first; default testing requires `chaos: true` and `latency: true`.
+The server and API contract are unchanged. `CHAOS=0 npm run dev:api` and
+`LATENCY=0 npm run dev:api` are available only for focused development checks.
 
 ## Time spent
 
-Roughly, and how you split it.
+Not recorded reliably; I have documented implementation and verification gaps instead of
+inventing a time breakdown.
 
 ---
 
@@ -52,8 +61,8 @@ The inventory intentionally separates root causes from user-visible effects. For
 the search race is caused by missing cancellation and stale-response protection, while
 the wrong rows shown to a producer are the consequence. I will change each row to
 **fixed** only after implementing and testing the corresponding behavior; optional live
-updates, statistics, and automated tests are not baseline defects and remain separate
-scope decisions below.
+updates and automated tests remain separate scope decisions, while the optional stats
+header is implemented non-blockingly and documented below.
 
 ---
 
@@ -94,9 +103,10 @@ browser's `online` event. Writes made while offline are intentionally not queued
 
 **State placement and URL sync**
 
-The search, status, and sort values are initialized from `URLSearchParams` and written with
-`history.replaceState`, so reloads and shared links restore the view without creating one
-history entry per typed character. A changed query resets the cursor and loaded items.
+The search, status, kind, tag, and sort values are initialized from `URLSearchParams` and
+written with `history.replaceState`, so reloads and shared links restore the view without
+creating one history entry per typed character. A changed query resets the cursor and loaded
+items.
 
 ---
 
@@ -106,13 +116,18 @@ Fill in real measurements, not estimates. Say which machine and browser.
 
 | Metric | Before | After | How measured |
 | --- | --- | --- | --- |
-| Rendered DOM nodes at 5,000 rows loaded | | | |
-| Cards re-rendered when toggling one selection | | | |
-| Longest task during sustained scroll | | | |
-| Requests fired while typing a 6-character query | | | |
-| Production bundle, gzipped | | | |
+| Rendered DOM nodes at 5,000 rows loaded | Baseline unmeasured; baseline renders every loaded item | Not measured in browser yet; implementation uses viewport rows plus overscan | Planned Chrome DevTools Elements count |
+| Cards re-rendered when toggling one selection | Baseline unmeasured; cards were not memoized | Not measured in React Profiler yet; cards are memoized with stable callbacks | Planned React DevTools Profiler comparison |
+| Longest task during sustained scroll | Baseline unmeasured | Not measured in browser yet | Planned Chrome Performance recording with 5,000+ rows |
+| Requests fired while typing a 6-character query | Baseline behavior is one request per keystroke | Not measured in Network panel; 300 ms debounce is implemented | Planned Chrome Network request count |
+| Production bundle, gzipped | 48 kB baseline stated in the brief | 52.64 kB JavaScript from `npm run build` | Vite production output, 2026-09-20 |
 
 What was the actual bottleneck, and how did you find it?
+
+The initial bottlenecks were unbounded card rendering, request-per-keystroke search, and
+whole-grid selection updates. The implementation now uses a fixed-row virtual grid, a 300 ms
+debounce, request cancellation/deduplication, and memoized cards. Browser profiler values are
+left explicitly unmeasured rather than presented as estimates.
 
 ---
 
@@ -126,16 +141,19 @@ What was the actual bottleneck, and how did you find it?
 
 ## Interface decisions
 
-Three or four sentences: what you were optimising for, and the decisions that
-follow from it. Then briefly:
+I optimized for a reviewer who scans and updates assets repeatedly, so the interface stays
+dense, stable, and action-oriented instead of decorative. The visual system uses teal as a
+focused accent, cool neutral surfaces, compact spacing tokens, and a restrained status
+progression from Draft through Archived. Fixed media geometry, explicit empty/error/offline
+states, and human-readable notices keep the interface honest when the network or backend
+misbehaves. The detail panel moves below the grid on narrow windows while the grid keeps its
+own stable scroll surface.
 
-- **Visual system.** Your colour, spacing and type decisions, and where they live.
-- **Status treatment.** How the four statuses read as a progression, and how they
-  stay distinguishable without relying on colour.
-- **States.** What you did with loading, empty, error, offline and partial
-  failure.
-- **Contrast.** What you checked against, and with what.
-- **Copy.** Any user-facing message you rewrote and why.
+- **Visual system.** Tokens live in `src/styles.css`: ink, muted ink, surface, line, teal accent, spacing, and radii. The UI uses Trebuchet MS for a compact operational tone and avoids one-off decorative values where practical.
+- **Status treatment.** Status labels remain visible and are paired with text markers: Draft `○`, In review `◐`, Approved `✓`, and Archived `—`; color is supporting information, not the only carrier.
+- **States.** Loading, empty, request error, offline, error-boundary, loading-more, and partial bulk failure have separate copy and layouts. Retryable bulk failures expose a retry action; legal-hold and missing assets are not retried.
+- **Contrast.** Automated WCAG contrast auditing has not yet been run; this is recorded rather than claimed as verified.
+- **Copy.** Raw rate-limit and upstream messages are rewritten as service-busy or temporary-availability guidance, and offline copy explains what remains available and what action is required.
 
 Screenshots in the repo are welcome — link them here.
 
@@ -143,13 +161,26 @@ Screenshots in the repo are welcome — link them here.
 
 ## Trade-offs and cuts
 
-What you deliberately did not do, and what you would do with another day.
+I did not queue writes while offline because replaying status changes later could surprise a
+reviewer; the user is asked to reconnect and retry. I used a hand-rolled fixed-row virtual
+grid to keep ownership and behavior explainable, accepting that variable-height cards would
+require a more capable virtualizer. Live SSE reconciliation and automated concurrency tests
+were not added; with another day I would add focused rollback/retry tests and verify scrolling,
+screen-reader output, and contrast in the target browser.
 
 ## Critique of the API
 
-What you would change about the backend contract, and what it forced you to do in
-the client that you would rather not have.
+Production design would benefit from a standard error envelope that always includes
+retryability and a machine-readable retry delay. Bulk status should ideally support an
+idempotency key and return a stable operation identifier for progress and retry; the client
+currently has to chunk requests and merge per-item results. The cursor contract is correct
+but strict, so every query change must reset pagination. The deliberately slow stats endpoint
+is loaded non-blockingly so it cannot delay the primary asset workflow.
 
 ## Anything you would like us to look at
 
-Code you are proud of, or a decision you are unsure about and want to discuss.
+The request pipeline and bulk operation are the most deliberate parts: stale queries are
+cancelled and generation-guarded, identical reads share an in-flight request, and partial
+bulk results roll back only failed IDs. The optional `/api/stats` header is non-blocking and
+failure-tolerant. The remaining open verification items are browser performance numbers,
+automated contrast checking, and actual screen-reader testing.

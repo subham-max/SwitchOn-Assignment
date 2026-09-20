@@ -159,6 +159,17 @@ export function getAssetsByIds(ids: string[]): Promise<{ items: Asset[]; missing
   return request(`/api/assets/batch?ids=${ids.join(',')}`);
 }
 
+export interface LibraryStats {
+  total: number;
+  byStatus: Record<string, number>;
+  byKind: Record<string, number>;
+  totalBytes: number;
+}
+
+export function getStats(): Promise<LibraryStats> {
+  return request<LibraryStats>('/api/stats');
+}
+
 export function updateAsset(
   id: string,
   version: number,
